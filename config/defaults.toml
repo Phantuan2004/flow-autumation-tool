@@ -1,0 +1,14 @@
+[application]
+name = "Flow Automation Tool"
+log_level = "INFO"
+
+[paths]
+database = "runtime/flow_automation.sqlite3"
+browser_profile = "runtime/browser-profile"
+assets = "runtime/assets"
+logs = "runtime/logs"
+
+[jobs]
+max_attempts = 3
+retry_backoff_seconds = 5
+

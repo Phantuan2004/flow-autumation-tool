@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local development environment
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Application runtime data (database, browser profile, media, logs)
+/runtime/
+/data/
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
