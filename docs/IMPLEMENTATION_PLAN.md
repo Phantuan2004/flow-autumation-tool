@@ -7,7 +7,7 @@
 - Kiểm thử trực tiếp một ảnh Nano Banana 2.1 x1 16:9, tải lựa chọn 1K/kích thước gốc; file JPEG thực đo 1376×768.
 - Kiểm thử trực tiếp một video từ ảnh đó với Omni 1.1 Flash, x1, 720p, 8 giây; tải lựa chọn 720p/kích thước gốc. `ffprobe` xác nhận H.264, 1280×720, 24 fps, thời lượng 8 giây.
 - Kết quả xác minh là một lần chạy UI cho mỗi loại media trên môi trường Windows/tài khoản hiện tại; không phải bảo đảm mọi model/tài khoản, chưa phải kiểm thử batch hoặc adapter end-to-end.
-- Các giới hạn còn lại (khó khăn cho production, không chặn việc đóng milestone khám phá này): chưa nối adapter tạo/chờ/thu thập/tải media vào UI hoặc job worker; chưa có queue bền vững, retry/cancel an toàn hoặc phục hồi; chưa kiểm thử đa nền tảng. Theo dõi trong M3–M6 bên dưới.
+- Các giới hạn còn lại (khó khăn cho production, không chặn việc đóng milestone khám phá này): chưa nối adapter tạo/chờ/thu thập/tải media vào UI hoặc job worker; chưa có scheduler/worker để thực thi job bền vững, retry/cancel có điều phối hoặc phục hồi tự động; chưa kiểm thử đa nền tảng. Theo dõi trong M3–M6 bên dưới.
 
 Các milestone roadmap bên dưới mô tả các phần sản phẩm độc lập; nhãn M2 cho import scene/assets trong roadmap không phải Milestone người dùng 2 ở trên.
 
@@ -20,12 +20,13 @@ Các milestone độc lập theo lát cắt có thể kiểm thử. M0 đã hoà
 - Tạo cửa sổ PyQt6 tối thiểu, CLI entry point và smoke test.
 - Hoàn tất khi cài được project trong venv, import/entry point hợp lệ và smoke test chạy thành công.
 
-## M1 — Domain và lưu trữ bền vững
+## M1 — Domain và lưu trữ bền vững (core hoàn tất)
 
-- Chốt entity project, scene, reference asset, image variant, approval, video output và job.
-- Định nghĩa state machine và kiểm tra chuyển trạng thái bất hợp lệ.
-- Thiết kế schema SQLite/SQLAlchemy, repository và migration strategy.
-- Kiểm thử unit state transitions và integration repository; xác minh khôi phục sau restart.
+- **Đã triển khai:** framework-independent dataclass/enums cho project, scene, reference, asset, generation job và job event; trạng thái job/scene tập trung trong core state machine.
+- **Đã triển khai:** SQLite/SQLAlchemy 2.x schema v1, SQLite foreign keys/busy timeout, `PRAGMA user_version`, transaction scope và repository cho project, scene, reference, asset, job, event, chọn ảnh, trạng thái và tiến độ.
+- **Đã kiểm soát:** job chỉ thành công khi caller xác nhận kết quả verified; ảnh chỉ được duyệt/chọn khi asset ảnh của scene đã verified; retry bị giới hạn; job gián đoạn/đối soát không được gửi lại an toàn nếu chưa xác nhận.
+- **Đã kiểm thử:** unit state machine và integration trên database tạm cho quan hệ, rollback transaction, nhiều scene/job/ảnh, chọn ảnh duy nhất, fail/retry, đối soát, mở lại database và version tương lai.
+- **Còn lại ngoài core milestone này:** bootstrap/UI chưa khởi tạo repository; chưa có migration v1→v2 vì chưa tồn tại schema cũ; chưa có scheduler/worker/resume tự động. `result_verified` là xác nhận từ caller, không đồng nghĩa với việc repository tự xác minh file.
 
 ## M2 — Import scene và quản lý assets
 
@@ -40,7 +41,7 @@ Các milestone độc lập theo lát cắt có thể kiểm thử. M0 đã hoà
 - **Đã quan sát trực tiếp:** người dùng đăng nhập thủ công bằng `open-flow`, vào dashboard và mở project; dashboard và project-editor markers được kiểm tra. Một ảnh Nano Banana 2.1 x1 16:9 đã được tạo, hiển thị và tải JPEG 1K (1376×768). Sau đó một video Omni 1.1 Flash x1, 720p, 8 giây từ ảnh này được tạo và tải; `ffprobe` xác nhận H.264 1280×720, 24 fps, 8 giây.
 - **Đã triển khai, unit-test nhưng chưa chạy live bằng adapter:** submit một ảnh, chờ tile ảnh tải xong, thu thập tham chiếu ảnh; adapter dừng an toàn và chặn gửi lại khi submit trước chưa đối soát.
 - **Còn lại cho production:** adapter tạo/chờ/thu thập ảnh và tạo video chưa được nối end-to-end vào thao tác người dùng trong UI/job worker. Download qua UI đã được kiểm thử trực tiếp một lần cho cả ảnh và video, nhưng `FlowAdapter.download_asset()` chưa được triển khai. Không chạy batch cho đến khi adapter/UI và lưu file được kiểm thử end-to-end.
-- Queue bền vững, retry/cancel và phục hồi job vẫn chưa triển khai; không dùng API Flow không chính thức.
+- Scheduler/worker điều phối việc chạy job đã lưu trong SQLite, retry/cancel thực thi và phục hồi tự động vẫn chưa triển khai; không dùng API Flow không chính thức.
 
 ## M4 — Tạo ảnh, gallery và duyệt
 

@@ -73,9 +73,34 @@ Smoke test chạy Qt ở chế độ offscreen khi tạo cửa sổ kiểm thử
 
 Đường dẫn mặc định nằm trong `runtime/` và được loại khỏi Git: SQLite, Chrome profile riêng, media/assets, diagnostics và log. Không lưu mật khẩu, cookie hoặc token trong cấu hình hay mã nguồn. Đăng nhập thủ công bằng `Open Browser` hoặc `flow-automation --open-flow`; Chrome giữ phiên trong profile cục bộ.
 
+## Domain và SQLite persistence
+
+Package domain (`flow_automation.core`) định nghĩa các model project, scene, job, asset, reference và event cùng enum trạng thái; package này không phụ thuộc PyQt6 hoặc Playwright. `flow_automation.persistence` cung cấp SQLAlchemy 2.x repositories trên SQLite. Khởi tạo database rõ ràng như sau:
+
+```python
+from pathlib import Path
+
+from flow_automation.persistence import Database, FlowRepository
+
+with Database.from_path(Path("runtime/flow_automation.sqlite3")) as database:
+    repository = FlowRepository(database)
+    project = repository.create_project("My project", "projects/my-project")
+    print(project.id)
+```
+
+Database tự tạo thư mục cha, bật SQLite foreign keys và timeout khóa, rồi nâng schema bằng `PRAGMA user_version` (schema hiện tại: 1). Mỗi thao tác repository chạy trong transaction riêng; lỗi sẽ rollback toàn bộ thao tác. Job và scene dùng state machine có kiểm soát; job chỉ thành công khi caller xác nhận kết quả đã kiểm tra, và ảnh chỉ được duyệt khi asset ảnh đã verified. Profile/session browser không được lưu trong schema.
+
+Persistence hiện được gọi tường minh qua `Database`/`FlowRepository`, chưa được bootstrap tự động trong UI và chưa có job scheduler/worker bền vững. API schema version đã sẵn sàng cho các nâng cấp tiếp theo; hiện chỉ có schema v1, chưa có migration từ một schema ứng dụng cũ.
+
 ## Cấu trúc
 
 - `src/flow_automation/`: mã nguồn ứng dụng, tách UI, application, domain, automation, pipelines, jobs, persistence, storage và diagnostics.
 - `config/defaults.toml`: cấu hình mặc định không chứa thông tin bí mật.
 - `docs/`: kiến trúc và kế hoạch milestone.
 - `tests/`: kiểm thử unit, integration, acceptance và fixtures.
+
+Test repository dùng SQLite trong thư mục tạm độc lập, không đụng database runtime:
+
+```powershell
+python -m pytest tests\unit\test_domain_state_machine.py tests\integration\test_persistence_repository.py
+```
