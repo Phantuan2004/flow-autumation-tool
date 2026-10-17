@@ -2,7 +2,9 @@
 
 ## Phạm vi hiện tại
 
-Đây là modular monolith chạy trên desktop. Milestone khởi tạo cung cấp khung package, cấu hình, tài liệu và cửa sổ PyQt6 tối thiểu. Chưa có chức năng tạo ảnh/video, điều khiển Flow, database schema hoặc job processing; UI không hiển thị dữ liệu giả để mô phỏng các chức năng đó.
+Đây là modular monolith chạy trên desktop. Ứng dụng có cửa sổ PyQt6, Chrome stable với profile riêng và CDP loopback, cùng luồng đăng nhập thủ công. Session checker nhận diện các marker Flow đã quan sát ở dashboard và project editor; nếu tín hiệu đăng nhập xung đột hoặc chưa đủ bằng chứng, trạng thái không được nâng thành authenticated.
+
+Trong một lần kiểm thử UI có người dùng, đã tạo và tải một ảnh Nano Banana 2.1 x1 16:9; tiếp đó đã tạo và tải một video Omni 1.1 Flash x1 720p, 8 giây từ ảnh đó. Video đã được xác minh H.264 1280×720, 24 fps, 8 giây. Đây là kiểm chứng thao tác UI đơn lẻ, không phải hỗ trợ tổng quát hay batch. `FlowAdapter` hiện có mã tạo/chờ/thu thập ảnh với unit test, nhưng chưa chạy live end-to-end; adapter tạo video và tải asset chưa tích hợp. Job queue bền vững, database schema/repositories và phục hồi job chưa triển khai.
 
 ## Các lớp và ranh giới
 
@@ -10,7 +12,7 @@
 - **Application (`application/`)**: use case như quản lý project, import cảnh, duyệt ảnh và điều phối quy trình. Chỉ phụ thuộc domain và các interface.
 - **Core/domain (`core/`)**: entity/value model, quy tắc nghiệp vụ và state machine; không phụ thuộc Qt, Playwright hoặc ORM.
 - **Jobs (`jobs/`)**: hàng đợi bền vững, scheduler, retry có giới hạn và khôi phục trạng thái. Worker phát tiến độ/kết quả về UI bằng cơ chế signal phù hợp của Qt.
-- **Automation (`automation/`)**: một Flow browser adapter duy nhất sở hữu Playwright, locator, selector, thao tác trang và tải tệp. Adapter dùng Chromium persistent context để duy trì phiên đăng nhập; lần đăng nhập đầu do người dùng thực hiện. Không giả định hoặc gọi API Flow không được công bố/hỗ trợ chính thức.
+- **Automation (`automation/`)**: Flow browser adapter sở hữu Playwright, locator, selector, thao tác trang và tải tệp. `BrowserProvider` mở Chrome stable riêng với app-specific profile, loopback CDP và OS-level profile lock; người dùng tự xác thực. Browser connectivity không đồng nghĩa với workspace authentication. Chỉ một marker workspace đã xác minh mới cho phép `AUTHENTICATED`; thao tác UI chưa xác minh fail closed. Không giả định hoặc gọi API Flow không được công bố/hỗ trợ chính thức.
 - **Pipelines (`pipelines/`)**: xử lý ảnh/video và quy tắc đầu vào/đầu ra; gọi adapter qua interface, không chứa locator.
 - **Persistence (`persistence/`)**: SQLAlchemy 2.x, SQLite, session/unit-of-work và repository implementations. Application/domain không thao tác trực tiếp với session ORM.
 - **Storage (`storage/`)**: lưu asset/media trên filesystem, metadata/thumbnails và quy tắc đặt tên; database giữ tham chiếu và trạng thái, không thay thế nội dung tệp.
@@ -40,4 +42,3 @@ SQLite, profile Chromium, media/assets và log được đặt dưới `runtime/
 - **Smoke**: package import, CLI entry point và khả năng khởi tạo cửa sổ offscreen.
 
 Kiểm thử thông thường không kết nối Flow thật và không phụ thuộc cookie/profile người dùng.
-

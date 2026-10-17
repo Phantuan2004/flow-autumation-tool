@@ -2,13 +2,20 @@
 name = "Flow Automation Tool"
 log_level = "INFO"
 
+[flow]
+url = "https://labs.google/fx/tools/flow"
+
 [paths]
 database = "runtime/flow_automation.sqlite3"
-browser_profile = "runtime/browser-profile"
+browser_profile = "runtime/browser-profile-manual-chrome"
 assets = "runtime/assets"
 logs = "runtime/logs"
+diagnostics = "runtime/diagnostics"
+
+[browser]
+channel = "chrome"
+default_timeout_ms = 15000
 
 [jobs]
 max_attempts = 3
 retry_backoff_seconds = 5
-
