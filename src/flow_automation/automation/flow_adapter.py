@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -8,6 +9,7 @@ from uuid import uuid4
 
 from playwright.async_api import (
     Error as PlaywrightError,
+    Locator,
     Page,
     TimeoutError as PlaywrightTimeoutError,
 )
@@ -15,10 +17,14 @@ from playwright.async_api import (
 from flow_automation.automation.errors import (
     AuthenticationRequiredError,
     FlowStateUnknownError,
+    FlowSubmissionNotSentError,
     UnsupportedOperationError,
 )
 from flow_automation.automation.flow_capabilities import FlowCapabilities
 from flow_automation.automation.locators import (
+    FLOW_DOWNLOAD_MENU_ITEM_NAME,
+    FLOW_IMAGE_MORE_OPTIONS_BUTTON_NAME,
+    FLOW_IMAGE_MODE_RADIO_NAME,
     FLOW_IMAGE_MODEL_NAME,
     FLOW_IMAGE_SETTINGS_BUTTON_NAME,
     FLOW_IMAGE_TILE_SELECTOR,
@@ -58,8 +64,10 @@ class FlowAsset:
 @dataclass(slots=True)
 class _ImageTaskState:
     baseline_tile_count: int
+    baseline_loaded_image_count: int = 0
     completed: bool = False
     assets: tuple[FlowAsset, ...] = ()
+    image_locators: tuple[Locator, ...] = ()
 
 
 class BrowserPageProvider(Protocol):
@@ -126,20 +134,20 @@ class FlowAdapter:
             )
 
     async def get_capabilities(self) -> FlowCapabilities:
-        logger.info("Returning partially verified Flow UI capabilities.")
+        logger.info("Returning Flow UI capabilities observed in the live image PoC.")
         return FlowCapabilities(
             image_generation=True,
             image_collection=True,
+            asset_download=True,
             models=(FLOW_IMAGE_MODEL_NAME,),
             aspect_ratios=("16:9", "4:3", "1:1", "3:4", "9:16"),
+            resolutions=("1K",),
             variant_counts=(1, 2, 3, 4),
             observations=(
-                "One Nano Banana 2.1 image was generated and displayed in the "
-                "authenticated Flow project UI.",
-                "One image was downloaded through the UI's 1K original-size "
-                "option; the saved JPEG measured 1376x768 pixels.",
-                "Download is not yet implemented by this adapter; video remains "
-                "unverified.",
+                "One Nano Banana 2.1 x1 image was generated, observed, collected, "
+                "and downloaded through the authenticated Flow project UI.",
+                "The saved JPEG was verified as 1376x768 pixels.",
+                "Video generation remains unsupported by this adapter.",
             ),
         )
 
@@ -153,9 +161,14 @@ class FlowAdapter:
     async def create_image(self, request: ImageRequest) -> FlowTask:
         if not request.prompt.strip():
             raise ValueError("Image prompt must not be empty.")
-        await self.require_authenticated_session()
+        try:
+            await self.require_authenticated_session()
+        except FlowStateUnknownError as error:
+            raise FlowSubmissionNotSentError(
+                "Flow session could not be verified; no image request was sent."
+            ) from error
         if any(not state.completed for state in self._image_tasks.values()):
-            raise FlowStateUnknownError(
+            raise FlowSubmissionNotSentError(
                 "An earlier image task has not been reconciled; no new task was sent."
             )
 
@@ -185,40 +198,44 @@ class FlowAdapter:
                 )
         except PlaywrightTimeoutError:
             await self._browser.capture_failure_screenshot()
-            raise FlowStateUnknownError(
+            raise FlowSubmissionNotSentError(
                 "Flow image settings timed out before submission."
             ) from None
         except PlaywrightError:
             await self._browser.capture_failure_screenshot()
-            raise FlowStateUnknownError(
+            raise FlowSubmissionNotSentError(
                 "Flow image settings could not be inspected safely."
             ) from None
 
         try:
             await settings_button.click()
-            radios = page.get_by_role("radio")
-            image_modes = []
-            single_variant_options = []
-            for index in range(await radios.count()):
-                radio = radios.nth(index)
-                if not await radio.is_visible():
-                    continue
-                label = " ".join((await radio.inner_text()).split())
-                if label.casefold().startswith("image "):
-                    image_modes.append(radio)
-                if label == "x1":
-                    single_variant_options.append(radio)
-            if (
-                len(image_modes) != 1
-                or not await image_modes[0].is_checked()
-                or len(single_variant_options) != 1
-                or not await single_variant_options[0].is_checked()
-            ):
-                await page.keyboard.press("Escape")
+            image_mode = page.get_by_role(
+                "radio",
+                name=FLOW_IMAGE_MODE_RADIO_NAME,
+                exact=True,
+            )
+            single_variant = page.get_by_role(
+                "radio",
+                name="x1",
+                exact=True,
+            )
+            await image_mode.wait_for(state="visible")
+            await single_variant.wait_for(state="visible")
+            image_mode_ready = (
+                await image_mode.count() == 1
+                and await image_mode.is_visible()
+                and await image_mode.is_checked()
+            )
+            single_variant_ready = (
+                await single_variant.count() == 1
+                and await single_variant.is_visible()
+                and await single_variant.is_checked()
+            )
+            await page.keyboard.press("Escape")
+            if not image_mode_ready or not single_variant_ready:
                 raise UnsupportedOperationError(
                     "Flow is not configured for image mode with exactly one output."
                 )
-            await page.keyboard.press("Escape")
 
             prompt_box = page.get_by_role(
                 "textbox",
@@ -240,13 +257,14 @@ class FlowAdapter:
                     "The verified Flow image prompt controls are unavailable."
                 )
             if (await prompt_box.inner_text()).strip():
-                raise FlowStateUnknownError(
+                raise FlowSubmissionNotSentError(
                     "The Flow prompt field is not empty; refusing to overwrite it."
                 )
 
             baseline_tile_count = await page.locator(
                 FLOW_IMAGE_TILE_SELECTOR
             ).count()
+            baseline_loaded_image_count = await self._loaded_project_image_count(page)
             await prompt_box.click()
             await prompt_box.press_sequentially(request.prompt)
             entered_prompt = " ".join((await prompt_box.inner_text()).split())
@@ -254,19 +272,31 @@ class FlowAdapter:
             if entered_prompt != requested_prompt:
                 await prompt_box.press("Control+A")
                 await prompt_box.press("Backspace")
-                raise FlowStateUnknownError(
+                raise FlowSubmissionNotSentError(
                     "The prompt field did not match the requested text; no job was sent."
                 )
-            if not await start_button.is_enabled():
+            try:
+                await page.wait_for_function(
+                    """name => {
+                        const button = [...document.querySelectorAll('button')]
+                            .find(item => item.getAttribute('aria-label') === name);
+                        return button && !button.disabled &&
+                            button.getAttribute('aria-disabled') !== 'true';
+                    }""",
+                    arg=FLOW_START_CREATE_BUTTON_NAME,
+                    timeout=15_000,
+                )
+            except PlaywrightTimeoutError:
                 await prompt_box.press("Control+A")
                 await prompt_box.press("Backspace")
-                raise FlowStateUnknownError(
+                raise FlowSubmissionNotSentError(
                     "Flow did not enable the submit control; no job was sent."
-                )
+                ) from None
 
             task = FlowTask(reference=uuid4().hex)
             self._image_tasks[task.reference] = _ImageTaskState(
                 baseline_tile_count=baseline_tile_count,
+                baseline_loaded_image_count=baseline_loaded_image_count,
             )
             try:
                 await start_button.click()
@@ -290,12 +320,12 @@ class FlowAdapter:
                 ) from None
         except PlaywrightTimeoutError:
             await self._browser.capture_failure_screenshot()
-            raise FlowStateUnknownError(
+            raise FlowSubmissionNotSentError(
                 "Flow image controls timed out before submission."
             ) from None
         except PlaywrightError:
             await self._browser.capture_failure_screenshot()
-            raise FlowStateUnknownError(
+            raise FlowSubmissionNotSentError(
                 "Flow image controls could not be inspected safely."
             ) from None
 
@@ -322,14 +352,25 @@ class FlowAdapter:
             await page.wait_for_function(
                 """baseline => {
                     const tiles = [...document.querySelectorAll('flow-image-tile')];
-                    if (tiles.length <= baseline) return false;
-                    return tiles.slice(baseline).some(tile =>
+                    if (
+                        tiles.length > baseline.tileCount &&
+                        tiles.slice(baseline.tileCount).some(tile =>
                         [...tile.querySelectorAll('img')].some(image =>
                             image.complete && image.naturalWidth > 100
                         )
+                        )
+                    ) return true;
+                    const viewport = document.querySelector('cdk-virtual-scroll-viewport');
+                    if (!viewport) return false;
+                    const images = [...viewport.querySelectorAll('img')].filter(image =>
+                        image.complete && image.naturalWidth > 100
                     );
+                    return images.length > baseline.imageCount;
                 }""",
-                arg=state.baseline_tile_count,
+                arg={
+                    "tileCount": state.baseline_tile_count,
+                    "imageCount": state.baseline_loaded_image_count,
+                },
                 timeout=int(timeout * 1000),
             )
         except PlaywrightTimeoutError:
@@ -360,24 +401,36 @@ class FlowAdapter:
             tiles = page.locator(FLOW_IMAGE_TILE_SELECTOR)
             tile_count = await tiles.count()
             new_tile_count = tile_count - state.baseline_tile_count
-            if new_tile_count != 1:
+            if new_tile_count == 1:
+                tile = tiles.nth(state.baseline_tile_count)
+                image = tile.locator("img").first
+                if await image.count() != 1:
+                    raise FlowStateUnknownError(
+                        "The new Flow image tile did not expose one collectable image."
+                    )
+                image_state = await image.evaluate(
+                    "element => ({complete: element.complete, width: element.naturalWidth})"
+                )
+                if not image_state["complete"] or image_state["width"] <= 100:
+                    raise FlowStateUnknownError(
+                        "The Flow image tile is not fully loaded; collection stopped safely."
+                    )
+                state.image_locators = (image,)
+            elif new_tile_count == 0:
+                image_locators = await self._new_loaded_project_images(
+                    page,
+                    state.baseline_loaded_image_count,
+                )
+                if len(image_locators) != 1:
+                    raise FlowStateUnknownError(
+                        "Expected exactly one new loaded project image for the x1 "
+                        "request; result association is ambiguous."
+                    )
+                state.image_locators = tuple(image_locators)
+            else:
                 raise FlowStateUnknownError(
                     "Expected exactly one new image tile for the x1 request; "
                     "result association is ambiguous."
-                )
-            tile_index = state.baseline_tile_count
-            tile = tiles.nth(tile_index)
-            image = tile.locator("img").first
-            if await image.count() != 1:
-                raise FlowStateUnknownError(
-                    "The new Flow image tile did not expose one collectable image."
-                )
-            image_state = await image.evaluate(
-                "element => ({complete: element.complete, width: element.naturalWidth})"
-            )
-            if not image_state["complete"] or image_state["width"] <= 100:
-                raise FlowStateUnknownError(
-                    "The Flow image tile is not fully loaded; collection stopped safely."
                 )
         except PlaywrightError:
             await self._browser.capture_failure_screenshot()
@@ -404,12 +457,100 @@ class FlowAdapter:
         asset: FlowAsset,
         destination: Path,
     ) -> Path:
-        del asset, destination
-        logger.warning(
-            "A one-off Flow image download was verified, but the adapter's "
-            "download operation is not implemented."
-        )
-        raise UnsupportedOperationError(
-            "Flow image download is not yet implemented by the adapter. A live "
-            "one-off download succeeded via the 1K original-size UI option."
-        )
+        task_reference, separator, asset_index = asset.reference.partition(":image:")
+        state = self._image_tasks.get(task_reference)
+        if (
+            not separator
+            or state is None
+            or not state.completed
+            or asset not in state.assets
+            or not asset_index.isdecimal()
+            or int(asset_index) >= len(state.image_locators)
+        ):
+            raise FlowStateUnknownError(
+                "Image download requires the matching collected result from this "
+                "adapter session."
+            )
+        if destination.exists():
+            raise FileExistsError(
+                "Refusing to overwrite an existing downloaded media file."
+            )
+
+        page = self._browser.page
+        image = state.image_locators[int(asset_index)]
+        tile = image.locator("xpath=ancestor::flow-image-tile[1]")
+        try:
+            await tile.hover()
+            more_options = tile.get_by_role(
+                "button",
+                name=FLOW_IMAGE_MORE_OPTIONS_BUTTON_NAME,
+                exact=True,
+            )
+            if await more_options.count() != 1:
+                raise UnsupportedOperationError(
+                    "The observed image options control is unavailable."
+                )
+            await more_options.click()
+            download_menu_item = page.get_by_role(
+                "menuitem",
+                name=FLOW_DOWNLOAD_MENU_ITEM_NAME,
+            )
+            await download_menu_item.wait_for(state="visible")
+            if await download_menu_item.count() != 1:
+                raise UnsupportedOperationError(
+                    "The observed image download menu item is unavailable."
+                )
+            await download_menu_item.click()
+            original_size = page.get_by_role(
+                "menuitem",
+                name=re.compile(r"^1K(?:\s|$)"),
+            )
+            await original_size.wait_for(state="visible")
+            if await original_size.count() != 1:
+                raise UnsupportedOperationError(
+                    "Flow did not expose one original 1K image download option."
+                )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            async with page.expect_download(timeout=30_000) as download_info:
+                await original_size.click()
+            download = await download_info.value
+            await download.save_as(destination)
+        except (PlaywrightError, OSError):
+            await self._browser.capture_failure_screenshot()
+            raise FlowStateUnknownError(
+                "The Flow image download did not complete safely."
+            ) from None
+        finally:
+            if not page.is_closed():
+                await page.keyboard.press("Escape")
+
+        logger.info("Downloaded one original-size Flow image through the UI.")
+        return destination
+
+    @staticmethod
+    async def _loaded_project_image_count(page: Page) -> int:
+        images = page.locator("cdk-virtual-scroll-viewport img")
+        loaded_count = 0
+        for index in range(await images.count()):
+            state = await images.nth(index).evaluate(
+                "element => ({complete: element.complete, width: element.naturalWidth})"
+            )
+            if state["complete"] and state["width"] > 100:
+                loaded_count += 1
+        return loaded_count
+
+    @staticmethod
+    async def _new_loaded_project_images(
+        page: Page,
+        baseline_count: int,
+    ) -> list[Locator]:
+        images = page.locator("cdk-virtual-scroll-viewport img")
+        loaded_images: list[Locator] = []
+        for index in range(await images.count()):
+            image = images.nth(index)
+            state = await image.evaluate(
+                "element => ({complete: element.complete, width: element.naturalWidth})"
+            )
+            if state["complete"] and state["width"] > 100:
+                loaded_images.append(image)
+        return loaded_images[baseline_count:]

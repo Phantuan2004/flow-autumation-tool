@@ -14,6 +14,10 @@ class FlowStateUnknownError(FlowAutomationError):
     """Raised when the current Flow or authentication state is ambiguous."""
 
 
+class FlowSubmissionNotSentError(FlowAutomationError):
+    """Raised when pre-submit validation fails before Flow can receive a request."""
+
+
 class AuthenticationRequiredError(FlowAutomationError):
     """Raised when the observed UI indicates that manual sign-in is required."""
 

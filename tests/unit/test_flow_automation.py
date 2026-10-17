@@ -22,6 +22,7 @@ from flow_automation.automation.errors import (
     BrowserAlreadyRunningError,
     BrowserLifecycleError,
     FlowStateUnknownError,
+    FlowSubmissionNotSentError,
     UnsupportedOperationError,
 )
 from flow_automation.automation.flow_adapter import (
@@ -33,6 +34,7 @@ from flow_automation.automation.flow_adapter import (
 )
 from flow_automation.automation.flow_capabilities import FlowCapabilities
 from flow_automation.automation.locators import (
+    FLOW_IMAGE_MODE_RADIO_NAME,
     FLOW_IMAGE_SETTINGS_BUTTON_NAME,
     FLOW_NEW_PROJECT_BUTTON_NAME,
     FLOW_PROMPT_TEXTBOX_NAME,
@@ -77,6 +79,11 @@ class FakeLocator:
 
     async def is_visible(self) -> bool:
         return self._visible
+
+    async def wait_for(self, *, state: str) -> None:
+        assert state == "visible"
+        if not self._visible:
+            raise PlaywrightError("locator is not visible")
 
     async def get_attribute(self, name: str) -> str | None:
         if name == "href":
@@ -232,6 +239,10 @@ class FakeImagePage(FakePage):
         exact: bool = False,
     ) -> FakeLocator:
         if role == "radio":
+            if name == FLOW_IMAGE_MODE_RADIO_NAME:
+                return self.image_mode
+            if name == "x1":
+                return self.single_variant
             return self.radios
         if role == "textbox" and name == FLOW_PROMPT_TEXTBOX_NAME:
             return self.prompt
@@ -254,11 +265,14 @@ class FakeImagePage(FakePage):
         self,
         expression: str,
         *,
-        arg: int,
+        arg: int | str | dict[str, int],
         timeout: int,
     ) -> None:
         del expression, timeout
-        assert arg == 0
+        if arg == FLOW_START_CREATE_BUTTON_NAME:
+            assert self.start._enabled
+            return
+        assert arg == {"tileCount": 0, "imageCount": 0}
         self.image_tile_count = 1
 
 
@@ -444,7 +458,7 @@ def test_adapter_capabilities_do_not_claim_unobserved_features() -> None:
     assert capabilities.image_generation
     assert capabilities.image_collection
     assert not capabilities.video_generation
-    assert not capabilities.asset_download
+    assert capabilities.asset_download
     assert not capabilities.verified
     assert capabilities.models == ("Nano Banana 2.1",)
 
@@ -455,7 +469,7 @@ def test_image_task_is_submitted_once_and_result_collection_is_idempotent() -> N
         adapter = FlowAdapter(FakeBrowser(page), SessionManager())
         task = await adapter.create_image(ImageRequest("A single test image"))
 
-        with pytest.raises(FlowStateUnknownError, match="not been reconciled"):
+        with pytest.raises(FlowSubmissionNotSentError, match="not been reconciled"):
             await adapter.create_image(ImageRequest("Do not submit this"))
         assert page.start.click_count == 1
 
@@ -481,7 +495,7 @@ def test_uncertain_image_submission_stays_pending_and_cannot_be_retried() -> Non
 
         with pytest.raises(FlowStateUnknownError, match="could not be confirmed"):
             await adapter.create_image(ImageRequest("A single test image"))
-        with pytest.raises(FlowStateUnknownError, match="not been reconciled"):
+        with pytest.raises(FlowSubmissionNotSentError, match="not been reconciled"):
             await adapter.create_image(ImageRequest("Do not submit this"))
         return page, browser
 
@@ -595,17 +609,18 @@ def test_unverified_operations_raise_structured_errors() -> None:
         lambda: adapter.create_video(
             VideoRequest("prompt", FlowAsset("asset", "image.png"))
         ),
-        lambda: adapter.download_asset(
-            FlowAsset("asset", "image.png"),
-            Path("image.png"),
-        ),
     )
     for operation in unsupported_operations:
         asyncio.run(run_operation(operation))
+    with pytest.raises(FlowSubmissionNotSentError, match="no image request was sent"):
+        asyncio.run(adapter.create_image(ImageRequest("prompt")))
     unavailable_operations = (
-        lambda: adapter.create_image(ImageRequest("prompt")),
         lambda: adapter.wait_for_result(FlowTask("task"), timeout=1),
         lambda: adapter.collect_images(FlowTask("task")),
+        lambda: adapter.download_asset(
+            FlowAsset("task:image:0", "image.png"),
+            Path("image.png"),
+        ),
     )
     for operation in unavailable_operations:
         asyncio.run(run_unavailable_operation(operation))

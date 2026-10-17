@@ -1,6 +1,6 @@
 # Flow Automation Tool
 
-Ứng dụng desktop Python/PyQt6 để quản lý quy trình sản xuất video theo batch trên giao diện web Veo 3 Flow. Milestone kiểm thử đăng nhập thủ công và khám phá UI đã hoàn tất trên một lần chạy có giám sát: một ảnh Nano Banana 2.1 và một video Omni 1.1 Flash 720p/8 giây đã được tạo và tải từ Flow. Đây chưa phải workflow batch: adapter ảnh/video/tải tài sản chưa được nối end-to-end vào UI/job worker. Chi tiết và giới hạn tại [docs/FLOW_COMPATIBILITY.md](./docs/FLOW_COMPATIBILITY.md) và [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md).
+Ứng dụng desktop Python/PyQt6 để quản lý quy trình sản xuất video theo batch trên giao diện web Veo 3 Flow. Image PoC Milestone 3 đã gửi một yêu cầu live Nano Banana 2.1 x1, nhận diện kết quả, tải JPEG 1K, xác minh 1376×768 và lưu job/asset trong SQLite. Lần tải đầu cần đối soát thủ công; chỉ tiếp tục tải từ kết quả hiện có, không gửi lại generation. PoC không có nút UI/worker, không phải workflow batch hoặc phục hồi tự động; video adapter chưa triển khai. Chi tiết và giới hạn tại [docs/FLOW_COMPATIBILITY.md](./docs/FLOW_COMPATIBILITY.md) và [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md).
 
 ## Yêu cầu
 
@@ -90,7 +90,9 @@ with Database.from_path(Path("runtime/flow_automation.sqlite3")) as database:
 
 Database tự tạo thư mục cha, bật SQLite foreign keys và timeout khóa, rồi nâng schema bằng `PRAGMA user_version` (schema hiện tại: 1). Mỗi thao tác repository chạy trong transaction riêng; lỗi sẽ rollback toàn bộ thao tác. Job và scene dùng state machine có kiểm soát; job chỉ thành công khi caller xác nhận kết quả đã kiểm tra, và ảnh chỉ được duyệt khi asset ảnh đã verified. Profile/session browser không được lưu trong schema.
 
-Persistence hiện được gọi tường minh qua `Database`/`FlowRepository`, chưa được bootstrap tự động trong UI và chưa có job scheduler/worker bền vững. API schema version đã sẵn sàng cho các nâng cấp tiếp theo; hiện chỉ có schema v1, chưa có migration từ một schema ứng dụng cũ.
+`bootstrap.create_flow_repository()` khởi tạo database và cấp repository cho application service; `FlowImagePocService` ghi project, scene, job và asset, UI không truy cập database trực tiếp. PoC gốc chỉ yêu cầu tích hợp persistence tối thiểu, không yêu cầu trigger UI hoặc worker; do đó luồng này chưa được gắn vào UI và không phải queue scheduler. Đối soát sau lỗi tải trong lần Flow live được thực hiện thủ công; không tuyên bố service tự phục hồi hoặc chạy liên tục không gián đoạn. API schema version hiện ở v1; chưa có migration v1→v2 vì chưa có thay đổi schema cần migration.
+
+`MediaVerifier.verify_image()` dùng Pillow để kiểm tra bytes/format/dimensions và tính SHA-256. Service chỉ đặt job `SUCCEEDED` và asset `VERIFIED` sau khi file tải xuống thực sự vượt qua bước này. PoC chỉ dùng ảnh; tạo video vẫn chưa được triển khai trong adapter.
 
 ## Cấu trúc
 
