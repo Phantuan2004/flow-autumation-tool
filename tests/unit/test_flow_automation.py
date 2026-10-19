@@ -568,6 +568,21 @@ def test_adapter_returns_authenticated_only_from_explicit_detector() -> None:
     assert asyncio.run(run()) is SessionStatus.AUTHENTICATED
 
 
+def test_adapter_requires_verified_image_workspace_and_single_variant() -> None:
+    async def run() -> None:
+        page = FakeImagePage()
+        adapter = FlowAdapter(FakeBrowser(page), SessionManager())
+        await adapter.require_image_workspace()
+        assert page.settings.click_count == 0
+
+        page.settings._text = "Different model 16:9 x1"
+        with pytest.raises(UnsupportedOperationError, match="Nano Banana 2.1"):
+            await adapter.require_image_workspace()
+        assert page.settings.click_count == 0
+
+    asyncio.run(run())
+
+
 def test_adapter_reports_closed_browser_as_unknown() -> None:
     async def run() -> None:
         adapter = FlowAdapter(FakeBrowser(None), SessionManager())

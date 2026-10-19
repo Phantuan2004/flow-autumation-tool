@@ -752,6 +752,41 @@ class FlowRepository:
             )
             return [_event(row) for row in session.scalars(statement)]
 
+    def record_job_note(
+        self,
+        job_id: str,
+        message: str,
+        *,
+        technical_details: Mapping[str, Any] | None = None,
+    ) -> JobEvent:
+        clean_message = _safe_text(message.strip(), field_name="Job event message")
+        if not clean_message:
+            raise ValueError("A safe event message is required.")
+        safe_details = _safe_json_object(
+            technical_details,
+            field_name="Job event details",
+        )
+        with self._database.session_scope() as session:
+            row = self._require(
+                session.get(GenerationJobRow, job_id),
+                "Generation job",
+                job_id,
+            )
+            now = utc_now()
+            event = JobEventRow(
+                id=new_id(),
+                job_id=job_id,
+                event_type=JobEventType.NOTE,
+                status_before=row.status,
+                status_after=row.status,
+                occurred_at=now,
+                message=clean_message,
+                technical_details=safe_details,
+            )
+            session.add(event)
+            session.flush()
+            return _event(event)
+
     def create_asset(
         self,
         project_id: str,
@@ -948,6 +983,13 @@ class FlowRepository:
             )
         elif after is JobStatus.RETRY_WAIT:
             if scene.status is running_status:
+                retry_source = (
+                    SceneStatus.READY
+                    if job_type is JobType.IMAGE
+                    else SceneStatus.IMAGE_APPROVED
+                )
+                transition_scene(scene.status, retry_source)
+                scene.status = retry_source
                 transition_scene(scene.status, queued_status)
                 scene.status = queued_status
             elif scene.status is SceneStatus.FAILED:

@@ -6,6 +6,10 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
 
+from flow_automation.application.job_control import JobControlService
+from flow_automation.jobs.job_runner import JobProcessor
+from flow_automation.jobs.retry_policy import RetryPolicy
+from flow_automation.jobs.scheduler import BatchScheduler
 from flow_automation.persistence import Database, FlowRepository
 
 
@@ -24,3 +28,22 @@ def create_flow_repository(database_path: Path) -> tuple[Database, FlowRepositor
     database = Database.from_path(database_path)
     database.initialize()
     return database, FlowRepository(database)
+
+
+def create_job_control_service(
+    repository: FlowRepository,
+    processor: JobProcessor,
+    *,
+    concurrency: int = 1,
+    browser_bound: bool = True,
+    retry_policy: RetryPolicy | None = None,
+) -> JobControlService:
+    """Create the application command/event interface for background job control."""
+    scheduler = BatchScheduler(
+        repository,
+        processor,
+        concurrency=concurrency,
+        browser_bound=browser_bound,
+        retry_policy=retry_policy,
+    )
+    return JobControlService(scheduler)

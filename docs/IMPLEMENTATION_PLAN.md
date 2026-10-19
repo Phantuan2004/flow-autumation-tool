@@ -45,13 +45,16 @@ Các milestone độc lập theo lát cắt có thể kiểm thử. M0 đã hoà
 - **Giới hạn xác minh:** đã chạy một lần tạo ảnh thật; không tuyên bố adapter tạo video đã xác minh. Video trước đây được thử trực tiếp trong Milestone người dùng 2, nhưng `FlowAdapter.create_video()` vẫn unsupported. Đây là kết quả PoC có giám sát, không phải workflow tự phục hồi hoặc sản xuất.
 - **Kiểm thử tự động:** unit/integration kiểm tra service, verifier, trạng thái lỗi và download UI trên Chrome fixture cục bộ; không thay cho lần chạy Flow thật. Không chạy batch và không dùng API Flow không chính thức.
 
-Các tính năng sản phẩm còn lại như UI quản lý scene/gallery, batch, video adapter, scheduler/worker, retry/cancel điều phối và phục hồi tự động thuộc các lát cắt tiếp theo; không phải điều kiện để chứng minh image PoC đơn này.
+Phần video adapter vẫn thuộc M5. Scheduler fake processor ban đầu đã được mở rộng trong M4 thành processor ảnh, Qt worker, UI project/scene prompt, batch controls và gallery; batch thật trên Flow chưa được chạy.
 
 ## M4 — Tạo ảnh, gallery và duyệt
 
-- Tạo image-generation job theo batch qua adapter; giới hạn concurrency phù hợp và lưu output/metadata.
-- Gallery variants theo scene, chọn/duyệt ảnh rõ ràng và bền vững.
-- Thử nghiệm retry, lỗi một phần của batch và khôi phục ứng dụng.
+- **Đã triển khai:** `FlowImageJobProcessor` dùng scene prompt, Flow adapter hiện có, tải về thư mục project và chỉ trả kết quả verified sau khi `MediaVerifier` xác nhận ảnh; lỗi sau khả năng submit yêu cầu reconciliation.
+- **Đã tích hợp:** `BrowserWorker` sở hữu browser, SQLite repository, scheduler và event loop trên QThread. UI gửi lệnh qua worker signals; concurrency browser bị giới hạn ở 1. Có thể tạo project/scene prompt, queue/start/pause/resume/cancel pending/retry failed, xem gallery và lưu một ảnh được duyệt cho mỗi scene.
+- **Đã kiểm soát:** khởi động yêu cầu xác nhận trước generation/retry có thể tốn credit; workspace editor và model Nano Banana 2.1 x1 được kiểm tra trước batch. Retry chỉ lấy job FAILED đã biết; job đang đối soát không được gửi lại. Tệp được kiểm tra lại bằng hash/MIME/kích thước trước khi chọn ảnh.
+- **Đã kiểm thử tự động:** batch scheduler 60 scene bằng fake processor; image processor success, output invalid → `RECONCILIATION_REQUIRED`, gallery nhiều biến thể/chọn ảnh, và file bị thay đổi sau xác minh. Test không dùng Flow account/credit.
+- **Giới hạn live:** FlowAdapter image PoC một ảnh đã được xác minh trong M3; batch do UI điều phối, retry thực tế, pause giữa job và khôi phục sau restart chưa được kiểm thử live. Vì generation có thể tiêu tốn credit, không gửi batch trong lần triển khai này. Không đánh dấu batch live-verified.
+- **Còn lại thuộc M5/M6:** video adapter/pipeline; import CSV/JSON và assets tham chiếu UI; kiểm thử acceptance live batch/restart trên tài khoản được cấp phép.
 
 ## M5 — Tạo video và tải output
 

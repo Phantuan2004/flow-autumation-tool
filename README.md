@@ -90,9 +90,25 @@ with Database.from_path(Path("runtime/flow_automation.sqlite3")) as database:
 
 Database tự tạo thư mục cha, bật SQLite foreign keys và timeout khóa, rồi nâng schema bằng `PRAGMA user_version` (schema hiện tại: 1). Mỗi thao tác repository chạy trong transaction riêng; lỗi sẽ rollback toàn bộ thao tác. Job và scene dùng state machine có kiểm soát; job chỉ thành công khi caller xác nhận kết quả đã kiểm tra, và ảnh chỉ được duyệt khi asset ảnh đã verified. Profile/session browser không được lưu trong schema.
 
-`bootstrap.create_flow_repository()` khởi tạo database và cấp repository cho application service; `FlowImagePocService` ghi project, scene, job và asset, UI không truy cập database trực tiếp. PoC gốc chỉ yêu cầu tích hợp persistence tối thiểu, không yêu cầu trigger UI hoặc worker; do đó luồng này chưa được gắn vào UI và không phải queue scheduler. Đối soát sau lỗi tải trong lần Flow live được thực hiện thủ công; không tuyên bố service tự phục hồi hoặc chạy liên tục không gián đoạn. API schema version hiện ở v1; chưa có migration v1→v2 vì chưa có thay đổi schema cần migration.
+`bootstrap.create_flow_repository()` khởi tạo database và cấp repository cho application service; UI không truy cập database trực tiếp. `FlowImagePocService` là PoC một ảnh đã có, còn luồng batch bên dưới dùng `FlowImageJobProcessor` và scheduler trên cùng worker sở hữu browser. Đối soát sau lỗi tải live trước đây được thực hiện thủ công; scheduler khi restart chuyển job còn `RUNNING` sang `RECONCILIATION_REQUIRED` và không gửi lại. API schema version hiện ở v1; chưa có migration v1→v2 vì không đổi schema.
 
 `MediaVerifier.verify_image()` dùng Pillow để kiểm tra bytes/format/dimensions và tính SHA-256. Service chỉ đặt job `SUCCEEDED` và asset `VERIFIED` sau khi file tải xuống thực sự vượt qua bước này. PoC chỉ dùng ảnh; tạo video vẫn chưa được triển khai trong adapter.
+
+## Tạo ảnh theo batch và duyệt
+
+Trong ứng dụng:
+
+1. Chọn **Open Browser**, đăng nhập thủ công và mở một project/editor Flow.
+2. Tạo project của tool, thêm scene và prompt bằng các điều khiển ở cửa sổ chính. Import CSV/JSON chưa được cung cấp.
+3. Trong Flow, chọn **Nano Banana 2.1**, image mode và **x1**. Bấm **Queue Images** để tạo job; thao tác này chưa gửi prompt.
+4. Bấm **Start Image Batch**, đọc và xác nhận cảnh báo credit. Worker kiểm tra workspace/model/UI trước khi chạy. Browser-bound jobs được tuần tự hóa ở concurrency 1.
+5. Kết quả chỉ chuyển `SUCCEEDED` sau khi tải file và `MediaVerifier` xác nhận ảnh; ảnh verified xuất hiện trong gallery theo scene. Chọn ảnh rồi bấm **Approve Selected Image** để lưu lựa chọn trong SQLite.
+
+**Pause** chặn job/attempt mới và để thao tác hiện hành kết thúc an toàn. **Cancel Pending** hủy job chưa bắt đầu và dừng dispatch; không tuyên bố đã hủy task ở Flow. **Retry Failed** yêu cầu xác nhận credit và chỉ retry job lỗi đã biết; kết quả không chắc chắn cần đối soát thủ công. Khi mở lại ứng dụng, job từng `RUNNING` được chuyển sang `RECONCILIATION_REQUIRED`, không tự gửi lại.
+
+`jobs/` cung cấp scheduler asyncio bền vững, pause/resume/cancel, retry hữu hạn, checkpoint/recovery và push progress events. Batch processor và gallery đã tích hợp vào Qt worker; bài test 60 scene và kiểm thử image processor dùng fake adapter/SQLite tạm, không gửi tác vụ tới Flow. Một image PoC riêng đã được chạy live trước đây, nhưng **batch từ UI chưa được xác minh live**; mỗi generation có thể tiêu tốn credit. Xem chính sách vận hành tại [docs/JOB_SCHEDULER.md](./docs/JOB_SCHEDULER.md) và trạng thái Flow tại [docs/FLOW_COMPATIBILITY.md](./docs/FLOW_COMPATIBILITY.md).
+
+Retry chỉ tự động áp dụng lỗi tạm thời đã biết trước khi có thể gửi thao tác ngoài. Lỗi xác thực không tự retry; bất kỳ lỗi nào sau khi Flow có thể đã nhận prompt đều yêu cầu đối soát thay vì gửi lại.
 
 ## Cấu trúc
 

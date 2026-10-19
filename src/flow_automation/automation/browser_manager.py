@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import logging
+import math
 import os
 import sys
 import tomllib
@@ -38,6 +39,10 @@ class BrowserConfig:
     log_level: str = "INFO"
     default_timeout_ms: int = 15_000
     channel: str | None = None
+    database_path: Path | None = None
+    assets_path: Path | None = None
+    max_attempts: int = 3
+    retry_backoff_seconds: float = 5.0
 
     def __post_init__(self) -> None:
         parsed_url = urlsplit(self.flow_url)
@@ -45,6 +50,15 @@ class BrowserConfig:
             raise ValueError("Flow URL must be an absolute HTTP(S) URL")
         if self.default_timeout_ms <= 0:
             raise ValueError("Browser timeout must be greater than zero")
+        if (
+            self.max_attempts < 1
+            or not math.isfinite(self.retry_backoff_seconds)
+            or self.retry_backoff_seconds < 0
+        ):
+            raise ValueError(
+                "Maximum attempts must be at least one and retry backoff must be finite "
+                "and non-negative."
+            )
 
     @classmethod
     def from_toml(
@@ -67,6 +81,10 @@ class BrowserConfig:
             log_level=config["application"]["log_level"],
             default_timeout_ms=browser["default_timeout_ms"],
             channel=browser["channel"],
+            database_path=project_root / paths["database"],
+            assets_path=project_root / paths["assets"],
+            max_attempts=config["jobs"]["max_attempts"],
+            retry_backoff_seconds=config["jobs"]["retry_backoff_seconds"],
         )
 
 

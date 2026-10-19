@@ -158,6 +158,35 @@ class FlowAdapter:
             "Project navigation has not been verified against an authenticated Flow workspace."
         )
 
+    async def require_image_workspace(self) -> None:
+        await self.require_authenticated_session()
+        page = self._browser.page
+        settings_button = page.get_by_role(
+            "button",
+            name=FLOW_IMAGE_SETTINGS_BUTTON_NAME,
+            exact=True,
+        )
+        prompt_box = page.get_by_role(
+            "textbox",
+            name=FLOW_PROMPT_TEXTBOX_NAME,
+            exact=True,
+        )
+        if (
+            await settings_button.count() != 1
+            or not await settings_button.is_visible()
+            or await prompt_box.count() != 1
+            or not await prompt_box.is_visible()
+        ):
+            raise UnsupportedOperationError(
+                "Open a Flow project editor manually before starting image jobs."
+            )
+        label = " ".join((await settings_button.inner_text()).split())
+        if FLOW_IMAGE_MODEL_NAME not in label or "x1" not in label:
+            raise UnsupportedOperationError(
+                f"Select the verified {FLOW_IMAGE_MODEL_NAME} image model "
+                "with x1 output in Flow."
+            )
+
     async def create_image(self, request: ImageRequest) -> FlowTask:
         if not request.prompt.strip():
             raise ValueError("Image prompt must not be empty.")
@@ -193,8 +222,8 @@ class FlowAdapter:
                 or "x1" not in settings_label
             ):
                 raise UnsupportedOperationError(
-                    "Select the verified Nano Banana image model and x1 output before "
-                    "submitting a single-image test."
+                    f"Select the verified {FLOW_IMAGE_MODEL_NAME} image model and "
+                    "x1 output before submitting an image job."
                 )
         except PlaywrightTimeoutError:
             await self._browser.capture_failure_screenshot()
